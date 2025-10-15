@@ -1,0 +1,103 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id       Int      @id @default(autoincrement())
+  name     String
+  email    String   @unique
+  roles    UserRole[]
+  refreshTokens RefreshToken[]
+  hashedPassword String?
+  createdAt DateTime @default(now())
+}
+
+model RefreshToken {
+  id        Int      @id @default(autoincrement())
+  tokenHash String   @unique
+  user      User     @relation(fields: [userId], references: [id])
+  userId    Int
+  revoked   Boolean  @default(false)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+model Role {
+  id          Int          @id @default(autoincrement())
+  name        String       @unique
+  users       UserRole[]
+  // Normalized role -> permission relations (one row per role+permission)
+  rolePermissions RolePermission[]
+  // Cached aggregated permissions per feature (bitmask)
+  roleFeaturePermissions RoleFeaturePermission[]
+}
+
+model Feature {
+  id    Int    @id @default(autoincrement())
+  key   String @unique
+  name  String
+  // Permissions available for this feature
+  permissions Permission[]
+  // Cached aggregated permissions per role
+  roleFeaturePermissions RoleFeaturePermission[]
+}
+
+// Permission model removed - legacy bitmask-based permissions were dropped
+// in favor of `PermissionAction` normalized rows. The database table will be
+// removed when you run `prisma db push --accept-data-loss` or a migration that
+// drops the table.
+
+// Normalized permission actions (one row per role+feature+action). This
+// exists alongside `Permission` for migration compatibility. After migration
+// you can drop the `Permission.bitmask` column and update code to use
+// PermissionAction exclusively.
+model Permission {
+  id        Int                 @id @default(autoincrement())
+  key       String
+  name      String
+  value     Int
+  feature   Feature             @relation(fields: [featureId], references: [id])
+  featureId Int
+  rolePermissions RolePermission[]
+
+  @@unique([featureId, key])
+}
+
+model RolePermission {
+  id           Int        @id @default(autoincrement())
+  role         Role       @relation(fields: [roleId], references: [id])
+  roleId       Int
+  permission   Permission @relation(fields: [permissionId], references: [id])
+  permissionId Int
+
+  @@unique([roleId, permissionId])
+  @@index([roleId, permissionId])
+}
+
+model RoleFeaturePermission {
+  id        Int     @id @default(autoincrement())
+  role      Role    @relation(fields: [roleId], references: [id])
+  roleId    Int
+  feature   Feature @relation(fields: [featureId], references: [id])
+  featureId Int
+  bitmask   Int     @default(0)
+
+  @@unique([roleId, featureId])
+  @@index([roleId, featureId])
+}
+
+model UserRole {
+  user   User @relation(fields: [userId], references: [id])
+  userId Int
+  role   Role @relation(fields: [roleId], references: [id])
+  roleId Int
+
+  assignedAt DateTime @default(now())
+
+  @@id([userId, roleId])
+}

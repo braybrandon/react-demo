@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- Development: allow API calls to local backend -->
+  <meta http-equiv="Content-Security-Policy" content="connect-src 'self' http://localhost:4000 http://127.0.0.1:4000 https://apps.rokt.com https://apps-demo.rokt.com https://*.roktinternal.com https://sourcemaps-wsdk.roktinternal.com;">
+  <!-- Dev-only: block any dynamic loads or fetch/XHR to roktinternal sourcemap host (temporary workaround) -->
+  <script>
+    (function () {
+      try {
+        const blockedHosts = ['sourcemaps-wsdk.roktinternal.com', 'roktinternal.com'];
+        const isBlocked = (url) => {
+          try {
+            if (!url) return false;
+            return blockedHosts.some((h) => url.indexOf(h) !== -1);
+          } catch (e) {
+            return false;
+          }
+        };
+
+        // Block fetch
+        const _fetch = window.fetch;
+        window.fetch = function (resource, init) {
+          try {
+            const url = typeof resource === 'string' ? resource : resource && resource.url;
+            if (isBlocked(url)) {
+              console.warn('[dev-blocker] blocked fetch to', url);
+              return new Promise(() => {});
+            }
+          } catch (e) {}
+          return _fetch.call(this, resource, init);
+        };
+
+        // Block XHR
+        const _open = window.XMLHttpRequest && window.XMLHttpRequest.prototype.open;
+        if (_open) {
+          window.XMLHttpRequest.prototype.open = function (method, url) {
+            try {
+              if (isBlocked(url)) {
+                console.warn('[dev-blocker] blocked XHR to', url);
+                return; // noop
+              }
+            } catch (e) {}
+            return _open.apply(this, arguments);
+          };
+        }
+
+        // Block dynamic script/link insertion
+        const _append = Element.prototype.appendChild;
+        Element.prototype.appendChild = function (child) {
+          try {
+            if (child && child.tagName) {
+              const tag = child.tagName.toLowerCase();
+              const src = child.src || child.href || '';
+              if ((tag === 'script' || tag === 'link') && isBlocked(src)) {
+                console.warn('[dev-blocker] prevented injecting', src);
+                return child;
+              }
+            }
+          } catch (e) {}
+          return _append.call(this, child);
+        };
+      } catch (e) {
+        // ignore in case of errors
+        console.error('[dev-blocker] init error', e);
+      }
+    })();
+  </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

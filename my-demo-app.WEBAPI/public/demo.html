@@ -1,0 +1,30 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Auth CSRF Demo</title>
+  </head>
+  <body>
+    <h1>Auth + CSRF Demo</h1>
+  <p id="demo-version" style="color:#666">Demo version: external-js (v2)</p>
+  <noscript style="color:crimson">JavaScript is required for this demo — please enable JS in your browser.</noscript>
+    <div>
+      <h2>Login</h2>
+      <input id="email" placeholder="email" value="test@example.com" />
+      <input id="password" placeholder="password" value="password" />
+      <button id="login" type="button">Login</button>
+      <div id="login-status" style="margin-top:8px;color:#333"></div>
+    </div>
+
+    <div>
+      <h2>Change Password (protected)</h2>
+      <input id="current" placeholder="current password" />
+      <input id="newpw" placeholder="new password" />
+      <button id="change" type="button">Change Password</button>
+      <div id="change-status" style="margin-top:8px;color:#333"></div>
+    </div>
+
+    <div id="script-ready" style="margin-top:8px;color:#666"></div>
+    <script src="/demo.js"></script>
+  </body>
+</html>
