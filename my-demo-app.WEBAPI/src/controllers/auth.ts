@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import rolePermissionService from '../services/rolePermissionService';
 import authService from '../services/authService';
+import userService from '../services/userService';
 import argon2 from 'argon2';
 import jwt from 'jsonwebtoken';
 
@@ -30,7 +31,9 @@ router.post('/register', async (req: Request, res: Response) => {
   if (!name || !email || !password) return res.status(400).json({ error: 'name, email, password required' });
 
   try {
-    const user = await authService.registerUser(name, email, password);
+    // If an authenticated user created this (e.g., admin console), include actor info
+    const actor = (req as any).user ? { id: (req as any).user.id, name: (req as any).user.name } : undefined;
+    const user = await authService.registerUser(name, email, password, actor);
     res.status(201).json({ id: user.id, name: user.name, email: user.email });
   } catch (err: any) {
     console.error(err);
@@ -67,6 +70,13 @@ router.post('/login', async (req: Request, res: Response) => {
   try {
     const { user, accessToken, refreshToken } = await authService.authenticateAndCreateTokens(email, password);
 
+    // Update last login timestamp
+    try {
+      await userService.updateLastLogin(user.id);
+    } catch (err) {
+      console.error('Failed to update lastLogin', err);
+    }
+
     // Set cookies
     res.cookie('access', accessToken, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', maxAge: 15 * 60 * 1000 });
     res.cookie('refresh', refreshToken, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', maxAge: 7 * 24 * 60 * 60 * 1000 });
@@ -101,6 +111,14 @@ router.post('/refresh', async (req: Request, res: Response) => {
     const result = await authService.verifyAndRotateRefresh(refresh);
     res.cookie('access', result.newAccess, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', maxAge: 15 * 60 * 1000 });
     res.cookie('refresh', result.newRefreshToken, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', maxAge: 7 * 24 * 60 * 60 * 1000 });
+
+    // Update last login for the user associated with the refresh token
+    try {
+      if (result && result.user && result.user.id) await userService.updateLastLogin(result.user.id);
+    } catch (err) {
+      console.error('Failed to update lastLogin on refresh', err);
+    }
+
     return res.json({ message: 'Access token refreshed' });
   } catch (err) {
     console.error(err);
@@ -218,7 +236,8 @@ router.post('/change-password', async (req: Request, res: Response) => {
   if (!email || !newPassword) return res.status(400).json({ error: 'email and newPassword required' });
 
   try {
-    const result = await authService.changePassword(email, currentPassword, newPassword);
+    const actor = (req as any).user ? { id: (req as any).user.id, name: (req as any).user.name } : undefined;
+    const result = await authService.changePassword(email, currentPassword, newPassword, actor);
     res.json(result);
   } catch (err) {
     console.error(err);

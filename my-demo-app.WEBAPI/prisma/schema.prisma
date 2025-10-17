@@ -7,6 +7,11 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum UserStatus {
+  ACTIVE
+  ARCHIVED
+}
+
 model User {
   id       Int      @id @default(autoincrement())
   name     String
@@ -14,7 +19,15 @@ model User {
   roles    UserRole[]
   refreshTokens RefreshToken[]
   hashedPassword String?
+  mustChangePassword Boolean @default(false)
+  // tokenVersion is incremented when credentials are rotated (password reset/change)
+  // so access tokens issued before the bump become invalid immediately.
+  tokenVersion Int @default(0)
   createdAt DateTime @default(now())
+  lastLogin DateTime?
+  status    UserStatus @default(ACTIVE)
+  // Audit logs where this user was the actor
+  auditLogs AuditLog[]
 }
 
 model RefreshToken {
@@ -100,4 +113,43 @@ model UserRole {
   assignedAt DateTime @default(now())
 
   @@id([userId, roleId])
+}
+
+// Audit log for create/update/delete/assignment events. Use this table to
+// populate activity feeds, troubleshooting, and compliance reporting.
+enum AuditEntityType {
+  USER
+  ROLE
+  FEATURE
+  PERMISSION
+  OTHER
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  ASSIGN
+  UNASSIGN
+}
+
+model AuditLog {
+  id         Int             @id @default(autoincrement())
+  actor      User?           @relation(fields: [actorId], references: [id])
+  actorId    Int?
+  actorName  String?
+
+  entityType AuditEntityType
+  entityId   String?         // store as string to support UUIDs or composite ids
+  entityName String?
+  action     AuditAction
+
+  // Optional free-form JSON with details: { before: {...}, after: {...}, note: '...'}
+  details    Json?
+
+  createdAt  DateTime        @default(now())
+
+  @@index([entityType, entityId])
+  @@index([actorId])
+  @@index([createdAt])
 }

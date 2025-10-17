@@ -1,8 +1,14 @@
-import React from 'react';
-import { Navigate, useLocation } from 'react-router-dom';
-import { currentUser, userHasPermission } from '../lib/auth.service';
+import React from "react";
+import { Navigate, useLocation } from "react-router-dom";
+import { currentUser, userHasPermission } from "../lib/auth.service";
 
-export default function RequireRole({ perm, children }: { perm: string; children: React.ReactElement }) {
+export default function RequireRole({
+  perm,
+  children,
+}: {
+  perm: string;
+  children: React.ReactElement;
+}) {
   const user = currentUser();
   const location = useLocation();
   if (!user) {

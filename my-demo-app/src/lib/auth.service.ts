@@ -9,26 +9,30 @@ export type ApiUser = {
   email?: string;
   roles?: any[];
   permissions?: Record<string, number>;
+  createdAt?: string;
+  lastLogin?: string | null;
+  status?: string;
+  mustChangePassword?: boolean;
 };
 
-const STORAGE_KEY = 'demo_auth_user_v2';
+const STORAGE_KEY = "demo_auth_user_v2";
 
 type StoredAuth = { user: ApiUser; expiresAt: number };
 
-const PERM_MANAGE = 'manage';
+const PERM_MANAGE = "manage";
 
 let _logoutTimer: number | null = null;
 let _refreshTimer: number | null = null;
 let _refreshPromise: Promise<boolean> | null = null;
 
-const API_BASE = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:4000';
+const API_BASE = (import.meta as any).env?.VITE_API_BASE || "http://localhost:4000";
 
 async function login(email: string, password: string) {
   // POST /auth/login with cookies
   const resp = await fetch(`${API_BASE}/auth/login`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
   });
 
@@ -39,24 +43,59 @@ async function login(email: string, password: string) {
   }
 
   // After login, request /auth/me to get the current user with permissions
-  const me = await fetch(`${API_BASE}/auth/me`, { credentials: 'include' });
-  if (!me.ok) throw new Error('Failed to fetch authenticated user');
+  const me = await fetch(`${API_BASE}/auth/me`, { credentials: "include" });
+  if (!me.ok) throw new Error("Failed to fetch authenticated user");
   const data = await me.json();
 
   // expiresIn ~15 minutes for access token
   const expiresAt = Date.now() + 15 * 60 * 1000;
   const stored: StoredAuth = { user: data as ApiUser, expiresAt };
+  try {
+    (window as any).__setCurrentUser && (window as any).__setCurrentUser(data as ApiUser);
+  } catch {}
+  // keep localStorage for compatibility/refresh fallback
   localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
   startAuthTimer();
   return data as ApiUser;
 }
 
+// Fetch current user from API and update local storage (used on app startup)
+async function fetchCurrentUser(): Promise<ApiUser | null> {
+  try {
+    const resp = await fetch(`${API_BASE}/auth/me`, { credentials: "include" });
+    if (!resp.ok) {
+      // If server reports token has been revoked, force local logout to avoid using stale access token
+      if (resp.status === 401) {
+        const body = await resp.json().catch(() => ({}) as any);
+        if (body && body.error === "Token revoked") {
+          logout();
+          return null;
+        }
+      }
+      return null;
+    }
+    const data = await resp.json();
+    const expiresAt = Date.now() + 15 * 60 * 1000;
+    const stored: StoredAuth = { user: data as ApiUser, expiresAt };
+    try {
+      (window as any).__setCurrentUser && (window as any).__setCurrentUser(data as ApiUser);
+    } catch {}
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
+    return data as ApiUser;
+  } catch (err) {
+    return null;
+  }
+}
+
 async function logout() {
   try {
-    await fetch(`${API_BASE}/auth/logout`, { method: 'POST', credentials: 'include' });
+    await fetch(`${API_BASE}/auth/logout`, { method: "POST", credentials: "include" });
   } catch (e) {
     // ignore network errors here
   }
+  try {
+    (window as any).__setCurrentUser && (window as any).__setCurrentUser(null);
+  } catch {}
   localStorage.removeItem(STORAGE_KEY);
   cancelAuthTimer();
 }
@@ -76,11 +115,14 @@ function currentUser(): ApiUser | null {
   }
 }
 
-function userHasPermission(user: ApiUser | null, perm: string) {
+function userHasPermission(user: ApiUser | null, perm: string, mask?: number) {
   if (!user) return false;
   const perms = user.permissions || {};
   const v = perms[perm] || 0;
-  return v > 0;
+  // If mask provided, check that all bits are present. Otherwise default
+  // to requiring the READ bit (1) so UI checks mirror backend read access.
+  const effectiveMask = typeof mask === "number" ? mask : 1;
+  return (v & effectiveMask) === effectiveMask;
 }
 
 function startAuthTimer(onExpire?: () => void) {
@@ -164,13 +206,25 @@ async function refreshAccess(): Promise<boolean> {
   if (_refreshPromise) return _refreshPromise;
   _refreshPromise = (async () => {
     try {
-      const resp = await fetch(`${API_BASE}/auth/refresh`, { method: 'POST', credentials: 'include' });
+      const resp = await fetch(`${API_BASE}/auth/refresh`, {
+        method: "POST",
+        credentials: "include",
+      });
       if (!resp.ok) {
+        // If refresh failed due to token being revoked server-side, force logout immediately
+        if (resp.status === 401) {
+          const body = await resp.json().catch(() => ({}) as any);
+          if (body && body.error === "Token revoked") {
+            logout();
+            _refreshPromise = null;
+            return false;
+          }
+        }
         _refreshPromise = null;
         return false;
       }
       // Re-fetch /auth/me to update user and permissions
-      const me = await fetch(`${API_BASE}/auth/me`, { credentials: 'include' });
+      const me = await fetch(`${API_BASE}/auth/me`, { credentials: "include" });
       if (!me.ok) {
         _refreshPromise = null;
         return false;
@@ -178,6 +232,9 @@ async function refreshAccess(): Promise<boolean> {
       const data = await me.json();
       const expiresAt = Date.now() + 15 * 60 * 1000;
       const stored: StoredAuth = { user: data as ApiUser, expiresAt };
+      try {
+        (window as any).__setCurrentUser && (window as any).__setCurrentUser(data as ApiUser);
+      } catch {}
       localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
       _refreshPromise = null;
       return true;
@@ -196,5 +253,22 @@ async function forceRefresh(): Promise<boolean> {
 
 export { forceRefresh };
 
-export { login, logout, currentUser, userHasPermission, startAuthTimer, cancelAuthTimer, PERM_MANAGE };
-export default { login, logout, currentUser, userHasPermission, startAuthTimer, cancelAuthTimer, PERM_MANAGE };
+export {
+  login,
+  logout,
+  currentUser,
+  userHasPermission,
+  startAuthTimer,
+  cancelAuthTimer,
+  PERM_MANAGE,
+  fetchCurrentUser,
+};
+export default {
+  login,
+  logout,
+  currentUser,
+  userHasPermission,
+  startAuthTimer,
+  cancelAuthTimer,
+  PERM_MANAGE,
+};

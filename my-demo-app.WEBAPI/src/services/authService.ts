@@ -3,6 +3,7 @@ import argon2 from 'argon2';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import rolePermissionService from './rolePermissionService';
+import { logAudit } from './audit.service';
 
 const prisma = new PrismaClient();
 
@@ -17,7 +18,12 @@ class AuthService {
   };
 
   createAccessToken(user: { id: number; email: string }) {
+    // tokenVersion inclusion will be handled by callers who have the user's tokenVersion value (see createAccessTokenWithVersion)
     return jwt.sign({ sub: user.id, email: user.email }, process.env.JWT_SECRET as string, { expiresIn: '15m' });
+  }
+
+  createAccessTokenWithVersion(user: { id: number; email: string; tokenVersion: number }) {
+    return jwt.sign({ sub: user.id, email: user.email, tv: user.tokenVersion }, process.env.JWT_SECRET as string, { expiresIn: '15m' });
   }
 
   async createRefreshTokenForUser(userId: number) {
@@ -34,26 +40,38 @@ class AuthService {
     const ok = await argon2.verify(user.hashedPassword, password);
     if (!ok) throw new this.AuthError('INVALID_CREDENTIALS', 'Invalid credentials');
 
-    const accessToken = this.createAccessToken({ id: user.id, email: user.email });
+    // Include tokenVersion in the access token so we can invalidate previously issued tokens
+    const accessToken = this.createAccessTokenWithVersion({ id: user.id, email: user.email, tokenVersion: (user as any).tokenVersion || 0 });
     const refreshToken = await this.createRefreshTokenForUser(user.id);
     return { user, accessToken, refreshToken };
   }
 
   // Register a user and return created user
-  async registerUser(name: string, email: string, password: string) {
+  async registerUser(name: string, email: string, password: string, actor?: { id?: number; name?: string }) {
     const hash = await argon2.hash(password);
-    const user = await prisma.user.create({ data: { name, email, hashedPassword: hash } });
+  const user = await prisma.user.create({ data: { name, email, hashedPassword: hash } });
+  try {
+    const summary = `${actor?.name ?? 'Someone'} created user ${user.name}`;
+    await logAudit({ actorId: actor?.id, actorName: (actor?.name) as string | undefined, entityType: 'USER', entityId: String(user.id), entityName: user.name as string | undefined, action: 'CREATE', details: { after: { id: user.id, name: user.name, email: user.email }, summary } });
+  } catch (e) { console.error('audit log failed', e); }
     return user;
   }
 
   // Change a user's password (handles initial set and revoke tokens)
-  async changePassword(email: string, currentPassword: string | undefined, newPassword: string) {
+  async changePassword(email: string, currentPassword: string | undefined, newPassword: string, actor?: { id?: number; name?: string }) {
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) throw new Error('User not found');
 
     if (!user.hashedPassword) {
       const hash = await argon2.hash(newPassword);
-      await prisma.user.update({ where: { id: user.id }, data: { hashedPassword: hash } });
+      // clear mustChangePassword and bump tokenVersion to invalidate issued access tokens
+      const before = user;
+    const updated = await prisma.user.update({ where: { id: user.id }, data: { hashedPassword: hash, mustChangePassword: false, tokenVersion: { increment: 1 } } as any });
+    try {
+      const summary = `${actor?.name ?? 'Someone'} set initial password for ${user.name}`;
+      await logAudit({ actorId: actor?.id, actorName: (actor?.name) as string | undefined, entityType: 'USER', entityId: String(user.id), entityName: user.name as string | undefined, action: 'UPDATE', details: { before: { id: before.id, name: before.name }, after: { id: updated.id, name: updated.name }, summary } });
+    } catch (e) { console.error('audit log failed', e); }
+      await prisma.refreshToken.updateMany({ where: { userId: user.id }, data: { revoked: true } });
       await prisma.refreshToken.updateMany({ where: { userId: user.id }, data: { revoked: true } });
       return { message: 'Password set' };
     }
@@ -62,15 +80,21 @@ class AuthService {
     const ok = await argon2.verify(user.hashedPassword, currentPassword);
     if (!ok) throw new Error('Invalid current password');
 
-    const newHash = await argon2.hash(newPassword);
-    await prisma.user.update({ where: { id: user.id }, data: { hashedPassword: newHash } });
+  const newHash = await argon2.hash(newPassword);
+  // clear mustChangePassword and bump tokenVersion so previously issued access tokens are invalidated
+  const before = user;
+  const updated = await prisma.user.update({ where: { id: user.id }, data: { hashedPassword: newHash, mustChangePassword: false, tokenVersion: { increment: 1 } } as any });
+    try {
+      const summary = `${actor?.name ?? 'Someone'} changed password for ${user.name}`;
+      await logAudit({ actorId: actor?.id, actorName: (actor?.name) as string | undefined, entityType: 'USER', entityId: String(user.id), entityName: user.name as string | undefined, action: 'UPDATE', details: { before: { id: before.id, name: before.name }, after: { id: updated.id, name: updated.name }, summary } });
+    } catch (e) { console.error('audit log failed', e); }
     await prisma.refreshToken.updateMany({ where: { userId: user.id }, data: { revoked: true } });
     return { message: 'Password changed' };
   }
 
   // Return user info + roles + aggregated permissions (used by /auth/me)
   async getUserWithPermissions(userId: number) {
-    const safeUser = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, name: true, email: true, createdAt: true } });
+  const safeUser = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, name: true, email: true, createdAt: true, mustChangePassword: true } as any });
     if (!safeUser) throw new Error('User not found');
 
     const userRoles = await prisma.userRole.findMany({ where: { userId }, include: { role: { select: { id: true, name: true } } } });
@@ -90,11 +114,19 @@ class AuthService {
   }
 
   // Check authentication status for token (used by /auth/status)
-  checkAuthToken(token: string) {
+  // Verifies JWT and ensures the token's tokenVersion (tv) matches the user's current tokenVersion
+  async checkAuthToken(token: string) {
     try {
       const payload = jwt.verify(token, process.env.JWT_SECRET as string) as any;
       if (!payload || !payload.sub) return null;
-      return Number(payload.sub);
+      const userId = Number(payload.sub);
+      // tokenVersion included in newer tokens as `tv`; treat missing as 0
+      const tokenVersionInToken = typeof payload.tv === 'number' ? payload.tv : 0;
+      // Fetch current tokenVersion from DB
+      const user = await prisma.user.findUnique({ where: { id: userId }, select: { tokenVersion: true } as any });
+      const currentTv = (user && (user as any).tokenVersion) || 0;
+      if (currentTv !== tokenVersionInToken) return null;
+      return userId;
     } catch (_) {
       return null;
     }
@@ -113,10 +145,10 @@ class AuthService {
         else if (req.cookies.jid) token = req.cookies.jid;
       }
       if (!token) return null;
-      const userId = this.checkAuthToken(token);
-      if (!userId) return null;
-      const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, name: true, email: true, createdAt: true } });
-      return user || null;
+  const userId = await this.checkAuthToken(token);
+  if (!userId) return null;
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, name: true, email: true, createdAt: true } });
+  return user || null;
     } catch (err) {
       return null;
     }
@@ -153,7 +185,7 @@ class AuthService {
         const newExpires = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
         const newDb = await prisma.refreshToken.create({ data: { tokenHash: newHash, userId: dbToken.userId, expiresAt: newExpires } });
         const newRefreshToken = `${newDb.id}.${newSecret}`;
-        const newAccess = this.createAccessToken({ id: tokenUser.id, email: tokenUser.email });
+  const newAccess = this.createAccessTokenWithVersion({ id: tokenUser.id, email: tokenUser.email, tokenVersion: (tokenUser as any).tokenVersion || 0 });
         return { newAccess, newRefreshToken, user: tokenUser };
       }
     }
@@ -172,7 +204,7 @@ class AuthService {
     const newExpires = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
     const newDb = await prisma.refreshToken.create({ data: { tokenHash: newHash, userId: dbToken.userId, expiresAt: newExpires } });
     const newRefreshToken = `${newDb.id}.${newSecret}`;
-    const newAccess = this.createAccessToken({ id: tokenUser.id, email: tokenUser.email });
+  const newAccess = this.createAccessTokenWithVersion({ id: tokenUser.id, email: tokenUser.email, tokenVersion: (tokenUser as any).tokenVersion || 0 });
     return { newAccess, newRefreshToken, user: tokenUser };
   }
 

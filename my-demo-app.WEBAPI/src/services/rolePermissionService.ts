@@ -62,7 +62,8 @@ async function computeAndPersistForRole(prisma: PrismaClient, roleId: number) {
       if (existing) {
         const merged = existing.bitmask | tp.bitmask;
         if (merged !== existing.bitmask) {
-          await prisma.roleFeaturePermission.update({ where: { id: existing.id }, data: { bitmask: merged } });
+          const before = existing;
+          const updated = await prisma.roleFeaturePermission.update({ where: { id: existing.id }, data: { bitmask: merged } });
         }
       } else {
         await prisma.roleFeaturePermission.create({ data: { roleId, featureId: tp.featureId, bitmask: tp.bitmask } });
@@ -86,7 +87,8 @@ export async function updateCacheOnAssign(prisma: PrismaClient, roleId: number, 
     const existing = await prisma.roleFeaturePermission.findUnique({ where: { roleId_featureId: { roleId, featureId } as any } });
     const newMask = ((existing?.bitmask ?? 0) | (permission.value ?? 0));
     if (existing) {
-      await prisma.roleFeaturePermission.update({ where: { id: existing.id }, data: { bitmask: newMask } });
+      const before = existing;
+      const updated = await prisma.roleFeaturePermission.update({ where: { id: existing.id }, data: { bitmask: newMask } });
     } else {
       await prisma.roleFeaturePermission.create({ data: { roleId, featureId, bitmask: newMask } });
     }

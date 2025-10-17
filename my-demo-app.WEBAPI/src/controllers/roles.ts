@@ -89,11 +89,12 @@ router.get('/:id', requireAuth, requireFeaturePermission('manage'), async (req: 
  *       201:
  *         description: Created
  */
-router.post('/', requireAuth, requireFeaturePermission('manage'), async (req: Request, res: Response) => {
+router.post('/', requireAuth, requireFeaturePermission('manage'), async (req: AuthRequest, res: Response) => {
   const { name } = req.body as { name?: string };
   if (!name) return res.status(400).json({ error: 'name required' });
   try {
-    const role = await roleService.createRole(name);
+    const actor = req.user ? { id: (req.user as any).id, name: (req.user as any).name } : undefined;
+    const role = await roleService.createRole(name, actor);
     res.status(201).json(role);
   } catch (err: any) {
     console.error(err);
@@ -136,13 +137,14 @@ router.post('/', requireAuth, requireFeaturePermission('manage'), async (req: Re
  *       200:
  *         description: Updated
  */
-router.put('/:id', requireAuth, requireFeaturePermission('manage'), async (req: Request, res: Response) => {
+router.put('/:id', requireAuth, requireFeaturePermission('manage'), async (req: AuthRequest, res: Response) => {
   const id = Number(req.params.id);
   const { name } = req.body as { name?: string };
   if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
   if (!name) return res.status(400).json({ error: 'name required' });
   try {
-    const role = await roleService.updateRole(id, name);
+  const actor = req.user ? { id: (req.user as any).id, name: (req.user as any).name } : undefined;
+  const role = await roleService.updateRole(id, name, actor);
     res.json(role);
   } catch (err: any) {
     console.error(err);
@@ -177,13 +179,14 @@ router.put('/:id', requireAuth, requireFeaturePermission('manage'), async (req: 
  *       201:
  *         description: Assignment created
  */
-router.put('/:roleId/permissions/:permissionId', requireAuth, requireFeaturePermission('manage'), async (req: Request, res: Response) => {
+router.put('/:roleId/permissions/:permissionId', requireAuth, requireFeaturePermission('manage'), async (req: AuthRequest, res: Response) => {
   const roleId = Number(req.params.roleId);
   const permissionId = Number(req.params.permissionId);
   if (Number.isNaN(roleId) || Number.isNaN(permissionId)) return res.status(400).json({ error: 'roleId and permissionId required' });
 
   try {
-    const result = await roleService.assignPermission(roleId, permissionId);
+  const actor = req.user ? { id: (req.user as any).id, name: (req.user as any).name } : undefined;
+  const result = await roleService.assignPermission(roleId, permissionId, actor);
     if (result.status === 'exists') return res.status(200).json({ message: result.message });
     return res.status(201).json({ message: result.message });
   } catch (err: any) {
@@ -218,13 +221,14 @@ router.put('/:roleId/permissions/:permissionId', requireAuth, requireFeaturePerm
  *       200:
  *         description: Removed
  */
-router.delete('/:roleId/permissions/:permissionId', requireAuth, requireFeaturePermission('manage'), async (req: Request, res: Response) => {
+router.delete('/:roleId/permissions/:permissionId', requireAuth, requireFeaturePermission('manage'), async (req: AuthRequest, res: Response) => {
   const roleId = Number(req.params.roleId);
   const permissionId = Number(req.params.permissionId);
   if (Number.isNaN(roleId) || Number.isNaN(permissionId)) return res.status(400).json({ error: 'roleId and permissionId required' });
 
   try {
-    const result = await roleService.removePermission(roleId, permissionId);
+  const actor = req.user ? { id: (req.user as any).id, name: (req.user as any).name } : undefined;
+  const result = await roleService.removePermission(roleId, permissionId, actor);
     return res.json(result);
   } catch (err: any) {
     console.error(err);
@@ -258,11 +262,12 @@ router.delete('/:roleId/permissions/:permissionId', requireAuth, requireFeatureP
  *       200:
  *         description: Deleted
  */
-router.delete('/:id', requireAuth, requireFeaturePermission('manage'), async (req: Request, res: Response) => {
+router.delete('/:id', requireAuth, requireFeaturePermission('manage'), async (req: AuthRequest, res: Response) => {
   const id = Number(req.params.id);
   if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
   try {
-    const result = await roleService.deleteRole(id);
+  const actor = req.user ? { id: (req.user as any).id, name: (req.user as any).name } : undefined;
+  const result = await roleService.deleteRole(id, actor);
     res.json(result);
   } catch (err: any) {
     console.error(err);

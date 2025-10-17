@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth, AuthRequest } from '../middleware/auth';
 import featureService from '../services/featureService';
 import requireFeaturePermission from '../middleware/requireFeaturePermission';
 
@@ -92,11 +92,12 @@ router.get('/:id', requireAuth, requireFeaturePermission('manage'), async (req: 
  *       201:
  *         description: Created
  */
-router.post('/', requireAuth, requireFeaturePermission('manage'), async (req: Request, res: Response) => {
+router.post('/', requireAuth, requireFeaturePermission('manage'), async (req: AuthRequest, res: Response) => {
   const { key, name } = req.body as { key?: string; name?: string };
   if (!key || !name) return res.status(400).json({ error: 'key and name required' });
   try {
-    const feature = await featureService.create({ key, name });
+    const actor = req.user ? { id: (req.user as any).id, name: (req.user as any).name } : undefined;
+    const feature = await featureService.create({ key, name }, actor);
     res.status(201).json(feature);
   } catch (err: any) {
     console.error(err);
@@ -141,13 +142,14 @@ router.post('/', requireAuth, requireFeaturePermission('manage'), async (req: Re
  *       200:
  *         description: Updated
  */
-router.put('/:id', requireAuth, requireFeaturePermission('manage'), async (req: Request, res: Response) => {
+router.put('/:id', requireAuth, requireFeaturePermission('manage'), async (req: AuthRequest, res: Response) => {
   const id = Number(req.params.id);
   const { key, name } = req.body as { key?: string; name?: string };
   if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
   if (!key && !name) return res.status(400).json({ error: 'key or name required' });
   try {
-    const feature = await featureService.update(id, { key, name });
+  const actor = req.user ? { id: (req.user as any).id, name: (req.user as any).name } : undefined;
+  const feature = await featureService.update(id, { key, name }, actor);
     res.json(feature);
   } catch (err: any) {
     console.error(err);
@@ -182,11 +184,12 @@ router.put('/:id', requireAuth, requireFeaturePermission('manage'), async (req: 
  *       200:
  *         description: Deleted
  */
-router.delete('/:id', requireAuth, requireFeaturePermission('manage'), async (req: Request, res: Response) => {
+router.delete('/:id', requireAuth, requireFeaturePermission('manage'), async (req: AuthRequest, res: Response) => {
   const id = Number(req.params.id);
   if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
   try {
-    const result = await featureService.delete(id);
+    const actor = req.user ? { id: (req.user as any).id, name: (req.user as any).name } : undefined;
+    const result = await featureService.delete(id, actor);
     res.json(result);
   } catch (err: any) {
     console.error(err);

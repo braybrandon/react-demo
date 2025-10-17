@@ -1,4 +1,4 @@
-import { Title, Text } from '@mantine/core';
+import { Title, Text } from "@mantine/core";
 
 export default function Forbidden() {
   return (

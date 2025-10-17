@@ -26,14 +26,23 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
     if (!payload || !payload.sub) return res.status(401).json({ error: 'Invalid token' });
 
     const userId = Number(payload.sub);
-    const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, name: true, email: true, createdAt: true } });
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, name: true, email: true, createdAt: true, tokenVersion: true } as any });
     if (!user) return res.status(401).json({ error: 'User not found' });
+
+    // If token contains a tokenVersion (tv) claim, require it to match the DB version
+    if (typeof payload.tv !== 'undefined') {
+      const tv = Number(payload.tv || 0);
+      const currentTv = Number((user as any).tokenVersion || 0);
+      if (tv !== currentTv) return res.status(401).json({ error: 'Token revoked' });
+    }
 
     req.userId = userId;
     req.user = user;
     next();
   } catch (err) {
+    // Detailed error for development debugging — includes jwt verify message (e.g. expired, malformed)
     console.error('Auth error', err);
-    res.status(401).json({ error: 'Invalid or expired token' });
+    const msg = (err && (err as any).message) || 'Invalid or expired token';
+    res.status(401).json({ error: msg });
   }
 }

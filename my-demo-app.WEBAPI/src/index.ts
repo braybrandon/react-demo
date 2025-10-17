@@ -85,7 +85,15 @@ app.use(
     origin: (origin, callback) => {
       // Allow requests with no origin (e.g., curl, server-to-server)
       if (!origin) return callback(null, true);
+      // Allow any configured/dev origins
       if (allowedOrigins.includes(origin)) return callback(null, true);
+      // Accept localhost/127.0.0.1 on any port (useful for dev servers running on different ports)
+      try {
+        const u = new URL(origin);
+        if (u.hostname === 'localhost' || u.hostname === '127.0.0.1') return callback(null, true);
+      } catch (e) {
+        // ignore parse errors and fall through to rejection
+      }
       return callback(new Error(`CORS policy: origin ${origin} not allowed`));
     },
     credentials: true,
@@ -172,37 +180,8 @@ const swaggerSpec = swaggerJSDoc({
   apis: [__filename, `${process.cwd().replace(/\\\\/g, '/')}/src/controllers/*.ts`],
 });
 
-// Protect Swagger UI in non-development environments
-if (process.env.NODE_ENV === 'development') {
-  // In development, expose Swagger UI without custom helper scripts
-  app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
-} else {
-  const swaggerUser = process.env.SWAGGER_USER;
-  const swaggerPass = process.env.SWAGGER_PASS;
-  // swaggerUi.serve may be an array of middlewares; normalize to array
-  const serveMiddleware = Array.isArray((swaggerUi as any).serve) ? (swaggerUi as any).serve : [(swaggerUi as any).serve];
-
-  app.use(
-    '/docs',
-    (req, res, next) => {
-      if (!swaggerUser || !swaggerPass) return res.status(503).send('Swagger not configured');
-      const auth = req.headers.authorization;
-      if (!auth || !auth.startsWith('Basic ')) {
-        res.setHeader('WWW-Authenticate', 'Basic realm="Swagger"');
-        return res.status(401).send('Authorization required');
-      }
-      const creds = Buffer.from(auth.slice('Basic '.length), 'base64').toString('utf8');
-      const [user, pass] = creds.split(':');
-      if (user !== swaggerUser || pass !== swaggerPass) {
-        res.setHeader('WWW-Authenticate', 'Basic realm="Swagger"');
-        return res.status(401).send('Invalid credentials');
-      }
-      next();
-    },
-    ...serveMiddleware,
-    (swaggerUi as any).setup(swaggerSpec)
-  );
-}
+// Expose Swagger UI at /docs for all environments (no basic auth required)
+app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
 /**
  * @openapi
@@ -235,6 +214,8 @@ import featuresRouter from './controllers/features';
 app.use('/features', featuresRouter);
 import permissionsRouter from './controllers/permissions';
 app.use('/permissions', permissionsRouter);
+import auditRouter from './controllers/audit';
+app.use('/audit', auditRouter);
 
 async function start() {
   // Ensure a strong JWT secret is configured
