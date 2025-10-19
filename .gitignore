@@ -1,0 +1,58 @@
+fit-agent/.env
+# --- Python basics ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+
+# --- Env & secrets ---
+.env
+.env.*      # (.env.local, etc.)
+*.key
+*.pem
+
+# --- Tool caches / reports ---
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.pytype/
+.dmypy.json
+.cache/
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Alembic ---
+alembic/__pycache__/
+alembic/*.pyc
+# Keep versions (migrations) – do NOT ignore these:
+#!alembic/versions/
+# If you want to be explicit, you can whitelist:
+# !alembic/versions/*.py
+
+# --- Logs ---
+*.log
+
+# --- Docker / DB artifacts (if you ever create them locally) ---
+pgdata/
+*.dump
+*.sql
